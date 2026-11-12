@@ -1,0 +1,32 @@
+[
+  {
+    "id": "home",
+    "title": "Home",
+    "url": "/",
+    "content": "export const metadata: Metadata = { alternates: }; export default function Home() { return ( ~/work/index.tsx build quietly. ship loudly. I m Rohmad Arifin a fullstack software engineer with 7+ years designing, developing, and launching scalable systems . I optimize processes, cut development cycles, and deliver cross-platform solutions from concept to execution. open projects :about me 01 const developer = { 02 &nbsp;&nbsp;name: rohmad arifin , 03 &nbsp;&nbsp;role: fullstack engineer , 04 &nbsp;&nbsp;location: kediri, indonesia , 05 &nbsp;&nbsp;stack: [ ts , react , node ], 06 &nbsp;&nbsp;mode: always learning 07 } at a glance read the context 07 years shipping software 06 companies, jakarta to bandung curiosity remaining what I reach for explore the experience systems that scale Payment switching platforms handling 27M records a day, micro-frontend dashboards, and 99.99% SLA reliability. developer experience first Internal tools, unified login systems, JS SDKs, and Nix-based environments that make teams faster. fullstack range TypeScript, React, Next.js, Node, Go, Python, Java web, mobile, cloud, and no-code platforms. now playing 2026 / q3 CURRENTLY BUILDING payment switching platforms at alto network Leading 11 engineers on Scrum, building internal platforms for Indonesia's payment switching infrastructure on Java Spring Boot, React, and PostgreSQL. ); }"
+  },
+  {
+    "id": "about",
+    "title": "About",
+    "url": "/about/",
+    "content": "export const metadata: Metadata = { alternates: }; export default function About() { return ( ~/work/about.tsx hello, I m rohmad. Fullstack software engineer based in Kediri, Indonesia working wherever there is a good problem and a reliable internet connection. arifinoid / fullstack available I m a fullstack software engineer with 7+ years in designing, developing, and launching scalable systems. My work sits between product engineering and platform thinking: optimizing processes, reducing development cycles, and delivering cross-platform solutions from concept to execution. Lately I lead a team of 11 engineers at Alto Network , building internal platforms for Indonesias payment switching infrastructure one of the countrys four licensed switching companies and part of the National Payment Gateway holding a 99.99% SLA. Before that: reliability work at AIA Indonesia, developer platforms at eFishery, integrations at Jubelio, and mobile apps at SiCepat Express. Outside the editor, I tinker with Nix and Neovim , keep my dotfiles tidy, and believe a good development environment is half the product. kediri / remote always brewing start a conversation github.com/arifinoid linkedin/rohmadarifin ); }"
+  },
+  {
+    "id": "blog",
+    "title": "Blog",
+    "url": "/blog/",
+    "content": "export const metadata: Metadata = { alternates: }; const notes = [ , ]; export default function Blog() { return ( ~/work/blog.tsx notes from the buffer. Dispatches on engineering, developer experience, and systems that stay calm under load. {notes.map((note) => ( ))} This buffer is still warming up. New notes land as they get written usually with too much coffee. ); }"
+  },
+  {
+    "id": "explore",
+    "title": "Experience",
+    "url": "/explore/",
+    "content": "export const metadata: Metadata = { alternates: }; const timeline = [ , , , , , , ]; export default function Explore() { return ( ~/work/experience.tsx the long way around. Seven years across logistics, insurtech, agritech, fintech, and developer platforms from React Native apps to micro-frontend payment systems. 01 / PATH {timeline.map((item) => ( {item.tags.map((tag) => ( ))} ))} 02 / PRINCIPLES reliability is a feature 99.99% SLAs and proactive monitoring beat firefighting every time. developer experience compounds Good tools, unified logins, and reproducible environments pay for themselves. measure, then optimize From 48-second loads to 1 second performance work starts with data. 03 / TOOLBOX typescript / react / next.js node / go / python postgresql / sql / nosql react native / flutter kubernetes / azure / graphql see it in practice ); }"
+  },
+  {
+    "id": "projects",
+    "title": "Projects",
+    "url": "/projects/",
+    "content": "export const metadata: Metadata = { alternates: }; const projects = [ , , , , ]; export default function Projects() { return ( ~/work/projects.tsx things I ve made. Systems, platforms, and tools built across seven years each one started as a problem worth solving. {projects.map((project) => { const Icon = project.icon; return ( {project.tags.map((tag) => ( ))} ); })} More experiments live on GitHub personal tools, dotfiles, and the occasional Nix adventure. github.com/arifinoid ); }"
+  }
+]
