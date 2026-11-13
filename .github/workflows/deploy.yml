@@ -72,32 +72,35 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
 
       - name: Create systemd service if missing
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          SERVICE_UNIT: |
+            [Unit]
+            Description=ask.arifinoid.web.id FastAPI service
+            After=network.target
+
+            [Service]
+            Type=simple
+            User=root
+            WorkingDirectory=/var/www/arifinoid/personal-ask-backend
+            EnvironmentFile=/var/www/arifinoid/personal-ask-backend/.env
+            ExecStart=/var/www/arifinoid/personal-ask-backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080
+            Restart=always
+
+            [Install]
+            WantedBy=multi-user.target
         run: |
+          echo "${SERVICE_UNIT}" | base64 -w0 > /tmp/service.b64
+          scp /tmp/service.b64 "root@${VPS_HOST}:/tmp/service.b64"
           ssh "root@${{ secrets.VPS_HOST }}" '
             set -eu
             if [ ! -f /etc/systemd/system/ask-api.service ]; then
-              cat > /etc/systemd/system/ask-api.service <<'"'"'SERVICE_EOF'"'"'
-[Unit]
-Description=ask.arifinoid.web.id FastAPI service
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/var/www/arifinoid/personal-ask-backend
-EnvironmentFile=/var/www/arifinoid/personal-ask-backend/.env
-ExecStart=/var/www/arifinoid/personal-ask-backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-SERVICE_EOF
+              base64 -d /tmp/service.b64 > /etc/systemd/system/ask-api.service
+              rm -f /tmp/service.b64
               systemctl daemon-reload
               systemctl enable ask-api
             fi
           '
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
 
       - name: Restart ask-api service
         run: |
