@@ -45,7 +45,9 @@ class TfidfRetriever:
         for doc in docs:
             title_terms = set(tokenize(doc.get("title", "")))
             self.title_terms.append(title_terms)
-            text = " ".join(str(doc.get(k, "")) for k in ("title", "content", "url"))
+            text = " ".join(
+                str(doc.get(k, "")) for k in ("title", "content", "url")
+            )
             tf = defaultdict(int)
             for term in tokenize(text):
                 tf[term] += 1
@@ -128,7 +130,7 @@ class TfidfRetriever:
             if idx != -1 and (best_idx == -1 or idx < best_idx):
                 best_idx = idx
         start = max(0, best_idx - 60) if best_idx != -1 else 0
-        snippet = content[start : start + max_chars]
+        snippet = content[start:start + max_chars]
         if start > 0:
             snippet = "…" + snippet
         if start + max_chars < len(content):
