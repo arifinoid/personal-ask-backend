@@ -76,7 +76,7 @@ jobs:
           ssh "root@${{ secrets.VPS_HOST }}" '
             set -eu
             if [ ! -f /etc/systemd/system/ask-api.service ]; then
-              cat > /etc/systemd/system/ask-api.service <<'"'"'EOF'"'"'
+              cat > /etc/systemd/system/ask-api.service <<'"'"'SERVICE_EOF'"'"'
 [Unit]
 Description=ask.arifinoid.web.id FastAPI service
 After=network.target
@@ -91,7 +91,7 @@ Restart=always
 
 [Install]
 WantedBy=multi-user.target
-'"'"'EOF
+SERVICE_EOF
               systemctl daemon-reload
               systemctl enable ask-api
             fi
