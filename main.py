@@ -4,19 +4,20 @@ Endpoints:
   GET  /health        -> liveness
   POST /v1/chat       -> { question } -> { answer, sources, retrieval_only }
 
-Retrieval is pure-Python TF-IDF over a static corpus.json. Optional LLM
-generation is gated behind LLM_BASE_URL; when absent the service returns
-retrieved sources only (retrieval_only mode).
+Retrieval is pure-Python TF-IDF over a static corpus built from corpus.json
+and/or documents stored in DOCS_DIR (txt/md/pdf). Optional LLM generation is
+gated behind LLM_BASE_URL.
 """
 
 import json
 import math
 import os
 import re
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 load_dotenv()
-from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +27,7 @@ import retrieval
 
 BASE_DIR = Path(__file__).resolve().parent
 CORPUS_PATH = BASE_DIR / "corpus.json"
+DOCS_DIR = Path(os.getenv("DOCS_DIR")) if os.getenv("DOCS_DIR") else None
 
 ALLOWED_ORIGINS = [
     o.strip()
@@ -44,11 +46,55 @@ RETRIEVAL_ONLY_NOTICE = (
 
 
 def load_corpus() -> list[dict]:
-    if not CORPUS_PATH.exists():
-        return []
-    with CORPUS_PATH.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-    return data if isinstance(data, list) else []
+    docs: list[dict] = []
+
+    # 1. Static corpus.json (site pages)
+    if CORPUS_PATH.exists():
+        with CORPUS_PATH.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            docs.extend(data)
+
+    # 2. Documents from DOCS_DIR (txt / md / pdf)
+    if DOCS_DIR and DOCS_DIR.is_dir():
+        for path in sorted(DOCS_DIR.iterdir()):
+            if not path.is_file():
+                continue
+            ext = path.suffix.lower()
+            content = _read_file(path)
+            if not content.strip():
+                continue
+            docs.append(
+                {
+                    "id": f"file:{path.stem}",
+                    "title": path.stem.replace("_", " ").title(),
+                    "url": f"/docs/{path.name}",
+                    "content": content,
+                }
+            )
+
+    return docs
+
+
+def _read_file(path: Path) -> str:
+    ext = path.suffix.lower()
+    try:
+        if ext in (".txt", ".md", ".markdown"):
+            return path.read_text(encoding="utf-8")
+        if ext == ".pdf":
+            return _read_pdf(path)
+    except Exception:  # noqa: BLE001 — skip unreadable files
+        return ""
+    return ""
+
+
+def _read_pdf(path: Path) -> str:
+    try:
+        from pypdf import PdfReader  # type: ignore
+    except Exception:  # noqa: BLE001 — pypdf not installed
+        return ""
+    reader = PdfReader(str(path))
+    return "\n".join((page.extract_text() or "") for page in reader.pages)
 
 
 CORPUS = load_corpus()
