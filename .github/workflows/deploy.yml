@@ -71,47 +71,27 @@ jobs:
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
 
-      - name: Create systemd service if missing
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          SERVICE_UNIT: |
-            [Unit]
-            Description=ask.arifinoid.web.id FastAPI service
-            After=network.target
-
-            [Service]
-            Type=simple
-            User=root
-            WorkingDirectory=/var/www/arifinoid/personal-ask-backend
-            EnvironmentFile=/var/www/arifinoid/personal-ask-backend/.env
-            ExecStart=/var/www/arifinoid/personal-ask-backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080
-            Restart=always
-
-            [Install]
-            WantedBy=multi-user.target
+      - name: Restart ask-api on VPS
         run: |
-          echo "${SERVICE_UNIT}" | base64 -w0 > /tmp/service.b64
-          scp /tmp/service.b64 "root@${VPS_HOST}:/tmp/service.b64"
           ssh "root@${{ secrets.VPS_HOST }}" '
             set -eu
-            if [ ! -f /etc/systemd/system/ask-api.service ]; then
-              base64 -d /tmp/service.b64 > /etc/systemd/system/ask-api.service
-              rm -f /tmp/service.b64
-              systemctl daemon-reload
-              systemctl enable ask-api
-            fi
+            cd /var/www/arifinoid/personal-ask-backend
+            # Kill any existing ask-api process
+            pkill -f "uvicorn main:app" 2>/dev/null || true
+            sleep 1
+            # Start uvicorn in background with nohup (works on read-only root)
+            source .venv/bin/activate
+            nohup uvicorn main:app --host 127.0.0.1 --port 8080 > ask-api.log 2>&1 &
+            echo $! > ask-api.pid
+            sleep 3
           '
-
-      - name: Restart ask-api service
-        run: |
-          ssh "root@${{ secrets.VPS_HOST }}" 'systemctl restart ask-api'
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
 
       - name: Verify deployment
         run: |
           sleep 3
-          ssh "root@${{ secrets.VPS_HOST }}" 'systemctl is-active ask-api'
+          ssh "root@${{ secrets.VPS_HOST }}" 'cat /var/www/arifinoid/personal-ask-backend/ask-api.pid && ps -p $(cat /var/www/arifinoid/personal-ask-backend/ask-api.pid) -o pid,cmd --no-headers'
           curl -s "http://${{ secrets.VPS_HOST }}:8080/health" || true
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
