@@ -4,10 +4,9 @@ Endpoints:
   GET  /health        -> liveness
   POST /v1/chat       -> { question } -> { answer, sources, retrieval_only }
 
-Retrieval is pure-Python TF-IDF over a static corpus.json (built from the
-Next.js pages). Optional LLM generation is gated behind LLM_BASE_URL /
-LLM_API_KEY env vars; when absent the service returns retrieved sources only
-(retrieval-only mode) — no key is ever shipped to the browser.
+Retrieval is pure-Python TF-IDF over a static corpus.json. Optional LLM
+generation is gated behind LLM_BASE_URL; when absent the service returns
+retrieved sources only (retrieval_only mode).
 """
 
 import json
@@ -31,9 +30,9 @@ ALLOWED_ORIGINS = [
     if o.strip()
 ]
 
-LLM_BASE_URL = os.getenv("LLM_BASE_URL")  # e.g. https://api.openai.com/v1
-LLM_API_KEY = os.getenv("LLM_API_KEY")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL") or ""
+LLM_API_KEY = os.getenv("LLM_API_KEY") or ""
+LLM_MODEL = os.getenv("LLM_MODEL", "llama3.2:1b")
 
 RETRIEVAL_ONLY_NOTICE = (
     "LLM generation not configured on this service. "
@@ -85,7 +84,8 @@ def health() -> dict:
     return {
         "status": "ok",
         "corpus_docs": len(CORPUS),
-        "retrieval_only": not bool(LLM_BASE_URL and LLM_API_KEY),
+        "retrieval_only": not bool(LLM_BASE_URL),
+        "llm_configured": bool(LLM_BASE_URL),
     }
 
 
@@ -94,25 +94,41 @@ def chat(req: ChatRequest) -> ChatResponse:
     if not req.question or not req.question.strip():
         raise HTTPException(status_code=400, detail="question is required")
 
-    hits = RETRIEVER.search(req.question.strip(), top_k=3) if RETRIEVER else []
+    question = req.question.strip()
+    hits = RETRIEVER.search(question, top_k=3) if RETRIEVER else []
     sources = [
         Source(title=h["title"], url=h["url"], snippet=h["snippet"]) for h in hits
     ]
 
-    retrieval_only = not bool(LLM_BASE_URL and LLM_API_KEY)
+    retrieval_only = not bool(LLM_BASE_URL)
     if retrieval_only:
-        answer = build_retrieval_only_answer(req.question, sources)
+        answer = build_retrieval_only_answer(question, sources)
     else:
-        answer = generate_with_llm(req.question, sources)
+        answer = generate_with_llm(question, sources)
 
     return ChatResponse(answer=answer, sources=sources, retrieval_only=retrieval_only)
 
 
 def build_retrieval_only_answer(question: str, sources: list[Source]) -> str:
+    q_lower = question.lower()
+    greetings = {"hi", "hello", "hey", "hi there", "hello there", "greetings"}
+    if q_lower in greetings or q_lower.startswith(("hi ", "hello ", "hey ")):
+        return (
+            "Hi there! I can answer questions about Rohmad's portfolio site.\n"
+            "Try asking about his experience, projects, or blog — for example:\n"
+            "• What projects has he built?\n"
+            "• Where does he work now?\n"
+            "• What's his experience with Kubernetes?\n"
+            "• Tell me about the unified login system"
+        )
     if not sources:
         return (
-            "I couldn't find anything relevant on the site for that question. "
-            "Try rephrasing, or ask about the projects, experience, or blog notes."
+            "I couldn't find anything relevant on the site for that question.\n"
+            "Try asking about his experience, projects, or blog notes instead:\n"
+            "• What projects has Rohmad built?\n"
+            "• Where does he work now?\n"
+            "• What's his experience with Kubernetes?\n"
+            "• Tell me about the unified login system"
         )
     lines = [RETRIEVAL_ONLY_NOTICE, ""]
     for i, s in enumerate(sources, 1):
@@ -134,13 +150,14 @@ def generate_with_llm(question: str, sources: list[Source]) -> str:
     )
     user = f"Question: {question}\n\nSources:\n{context}"
 
+    headers = {"Content-Type": "application/json"}
+    if LLM_API_KEY:
+        headers["Authorization"] = f"Bearer {LLM_API_KEY}"
+
     try:
         resp = httpx.post(
             f"{LLM_BASE_URL.rstrip('/')}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {LLM_API_KEY}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             json={
                 "model": LLM_MODEL,
                 "messages": [
@@ -149,7 +166,7 @@ def generate_with_llm(question: str, sources: list[Source]) -> str:
                 ],
                 "temperature": 0.3,
             },
-            timeout=30.0,
+            timeout=60.0,
         )
         resp.raise_for_status()
         data = resp.json()

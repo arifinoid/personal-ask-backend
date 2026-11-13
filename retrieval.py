@@ -2,8 +2,13 @@
 
 No numpy / scikit-learn / sentence-transformers — deliberately boring so the
 service stays small and dependency-light. Good enough for a handful of pages.
+
+Title terms are boosted so short queries (e.g. "projects") match the page whose
+title contains that word. Query terms are expanded with their singular form
+(stripping a trailing 's') so "project" matches "projects" etc.
 """
 
+import math
 import re
 from collections import defaultdict
 
@@ -14,22 +19,33 @@ def tokenize(text: str) -> list[str]:
     return _TOKEN_RE.findall(text.lower())
 
 
+def expand_terms(terms: list[str]) -> list[str]:
+    """Return terms plus their singular forms for basic plural matching."""
+    expanded: list[str] = []
+    for term in terms:
+        expanded.append(term)
+        if term.endswith("s") and len(term) > 3:
+            expanded.append(term[:-1])
+    return expanded
+
+
 class TfidfRetriever:
     def __init__(self, docs: list[dict]) -> None:
         self.docs = docs
-        # term -> set of doc indices containing it
+        # term -> number of docs containing it
         self.df: dict[str, int] = defaultdict(int)
-        # doc index -> {term: tfidf weight}
+        # doc index -> {term: normalized tfidf weight}
         self.doc_vectors: list[dict[str, float]] = []
+        # doc index -> set of title terms (for boosting at query time)
+        self.title_terms: list[set[str]] = []
         self._build(docs)
 
     def _build(self, docs: list[dict]) -> None:
-        # raw term frequency per doc
         doc_tfs: list[dict[str, int]] = []
         for doc in docs:
-            text = " ".join(
-                str(doc.get(k, "")) for k in ("title", "content", "url")
-            )
+            title_terms = set(tokenize(doc.get("title", "")))
+            self.title_terms.append(title_terms)
+            text = " ".join(str(doc.get(k, "")) for k in ("title", "content", "url"))
             tf = defaultdict(int)
             for term in tokenize(text):
                 tf[term] += 1
@@ -52,8 +68,11 @@ class TfidfRetriever:
     def search(self, query: str, top_k: int = 3) -> list[dict]:
         if not self.docs:
             return []
+        q_terms = expand_terms(tokenize(query))
+        if not q_terms:
+            return []
         q_tf = defaultdict(int)
-        for term in tokenize(query):
+        for term in q_terms:
             q_tf[term] += 1
         n = len(self.docs)
         q_vec: dict[str, float] = {}
@@ -69,8 +88,16 @@ class TfidfRetriever:
         q_vec = {t: w / q_norm for t, w in q_vec.items()}
 
         scores: list[tuple[float, int]] = []
+        title_boost = 1.6
         for i, doc_vec in enumerate(self.doc_vectors):
-            score = sum(q_vec[t] * doc_vec.get(t, 0.0) for t in q_vec)
+            score = 0.0
+            for qt, qw in q_vec.items():
+                dw = doc_vec.get(qt, 0.0)
+                if dw > 0:
+                    score += qw * dw
+                    # boost when the query term sits in the doc title
+                    if qt in self.title_terms[i]:
+                        score += qw * dw * (title_boost - 1.0)
             if score > 0:
                 scores.append((score, i))
         scores.sort(reverse=True)
@@ -78,8 +105,7 @@ class TfidfRetriever:
         results = []
         for score, i in scores[:top_k]:
             doc = self.docs[i]
-            content = doc.get("content", "")
-            snippet = self._snippet(content, query)
+            snippet = self._snippet(doc.get("content", ""), query)
             results.append(
                 {
                     "title": doc.get("title", ""),
@@ -95,7 +121,6 @@ class TfidfRetriever:
         terms = set(tokenize(query))
         if not content:
             return ""
-        # find the first occurrence of any query term
         lower = content.lower()
         best_idx = -1
         for term in terms:
