@@ -27,6 +27,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install flake8
 
       - name: Typecheck / lint
         run: |
@@ -34,13 +35,18 @@ jobs:
           python -m flake8 main.py retrieval.py || true
 
       - name: Configure SSH
+        if: env.VPS_SSH_KEY != '' && env.VPS_HOST != ''
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
 
       - name: Upload code to VPS
+        if: env.VPS_SSH_KEY != '' && env.VPS_HOST != ''
         run: |
           rsync -az --delete \
             --exclude='.env' \
@@ -50,8 +56,12 @@ jobs:
             --exclude='.git/' \
             --exclude='.github/' \
             . "root@${{ secrets.VPS_HOST }}:/var/www/arifinoid/personal-ask-backend/"
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
 
       - name: Install Python dependencies on VPS
+        if: env.VPS_SSH_KEY != '' && env.VPS_HOST != ''
         run: |
           ssh "root@${{ secrets.VPS_HOST }}" '
             set -eu
@@ -61,13 +71,24 @@ jobs:
             pip install --upgrade pip
             pip install -r requirements.txt
           '
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
 
       - name: Restart ask-api service
+        if: env.VPS_SSH_KEY != '' && env.VPS_HOST != ''
         run: |
           ssh "root@${{ secrets.VPS_HOST }}" 'systemctl restart ask-api'
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
 
       - name: Verify deployment
+        if: env.VPS_SSH_KEY != '' && env.VPS_HOST != ''
         run: |
           sleep 3
           ssh "root@${{ secrets.VPS_HOST }}" 'systemctl is-active ask-api'
           curl -s "http://${{ secrets.VPS_HOST }}:8080/health" || true
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
