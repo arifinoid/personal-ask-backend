@@ -10,14 +10,8 @@ gated behind LLM_BASE_URL.
 """
 
 import json
-import math
 import os
-import re
 from pathlib import Path
-
-from dotenv import load_dotenv
-
-load_dotenv()
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,13 +19,19 @@ from pydantic import BaseModel
 
 import retrieval
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 BASE_DIR = Path(__file__).resolve().parent
 CORPUS_PATH = BASE_DIR / "corpus.json"
 DOCS_DIR = Path(os.getenv("DOCS_DIR")) if os.getenv("DOCS_DIR") else None
 
 ALLOWED_ORIGINS = [
     o.strip()
-    for o in os.getenv("ALLOWED_ORIGINS", "https://arifinoid.web.id,http://localhost:3000").split(",")
+    for o in os.getenv(
+        "ALLOWED_ORIGINS", "https://arifinoid.web.id,http://localhost:3000"
+    ).split(",")
     if o.strip()
 ]
 
@@ -41,7 +41,8 @@ LLM_MODEL = os.getenv("LLM_MODEL", "llama3.2:1b")
 
 RETRIEVAL_ONLY_NOTICE = (
     "LLM generation not configured on this service. "
-    "Below are the most relevant sections from the site — open a link to read more."
+    "Below are the most relevant sections from the site "
+    "open a link to read more."
 )
 
 
@@ -60,7 +61,6 @@ def load_corpus() -> list[dict]:
         for path in sorted(DOCS_DIR.iterdir()):
             if not path.is_file():
                 continue
-            ext = path.suffix.lower()
             content = _read_file(path)
             if not content.strip():
                 continue
@@ -78,13 +78,10 @@ def load_corpus() -> list[dict]:
 
 def _read_file(path: Path) -> str:
     ext = path.suffix.lower()
-    try:
-        if ext in (".txt", ".md", ".markdown"):
-            return path.read_text(encoding="utf-8")
-        if ext == ".pdf":
-            return _read_pdf(path)
-    except Exception:  # noqa: BLE001 — skip unreadable files
-        return ""
+    if ext in (".txt", ".md", ".markdown"):
+        return path.read_text(encoding="utf-8")
+    if ext == ".pdf":
+        return _read_pdf(path)
     return ""
 
 
@@ -189,7 +186,8 @@ def generate_with_llm(question: str, sources: list[Source]) -> str:
     import httpx
 
     context = "\n\n".join(
-        f"Source {i+1} [{s.title}]({s.url}): {s.snippet}" for i, s in enumerate(sources)
+        f"Source {i+1} [{s.title}]({s.url}): {s.snippet}"
+        for i, s in enumerate(sources)
     ) or "No relevant sources found."
 
     system = (
