@@ -4,8 +4,11 @@ No numpy / scikit-learn / sentence-transformers — deliberately boring so the
 service stays small and dependency-light. Good enough for a handful of pages.
 
 Title terms are boosted so short queries (e.g. "projects") match the page whose
-title contains that word. Query terms are expanded with their singular form
-(stripping a trailing 's') so "project" matches "projects" etc.
+title contains that word, and a page whose entire title appears in the query
+("What is his experience?") is boosted further. Section headings get the same
+treatment: a document that says "EDUCATION ..." should beat one that only
+mentions "education" in passing. Query terms are expanded with their singular
+form (stripping a trailing 's') so "project" matches "projects" etc.
 """
 
 import math
@@ -49,6 +52,20 @@ def expand_terms(terms: list[str]) -> list[str]:
     return expanded
 
 
+# Section headings say what a chunk is about: resumes write "EDUCATION" and
+# "SKILLS", markdown writes "## Education". Chunked documents are joined with
+# spaces, so the marker survives mid-string; match it there, not per line.
+_MARKDOWN_HEADING_RE = re.compile(r"(?:^|\s)#{1,6}\s+([A-Za-z][\w-]*)")
+_CAPS_HEADING_RE = re.compile(r"\b[A-Z][A-Z0-9&/.-]{2,}\b")
+
+
+def heading_terms(content: str) -> set[str]:
+    """Terms that appear as a heading or acronym in a document chunk."""
+    terms = {match.group(1).lower() for match in _MARKDOWN_HEADING_RE.finditer(content)}
+    terms.update(term.lower() for term in _CAPS_HEADING_RE.findall(content))
+    return terms
+
+
 class TfidfRetriever:
     def __init__(self, docs: list[dict]) -> None:
         self.docs = docs
@@ -58,6 +75,8 @@ class TfidfRetriever:
         self.doc_vectors: list[dict[str, float]] = []
         # doc index -> set of title terms (for boosting at query time)
         self.title_terms: list[set[str]] = []
+        # doc index -> set of heading/acronym terms (same purpose)
+        self.heading_terms: list[set[str]] = []
         self._build(docs)
 
     def _build(self, docs: list[dict]) -> None:
@@ -65,6 +84,7 @@ class TfidfRetriever:
         for doc in docs:
             title_terms = set(tokenize(doc.get("title", "")))
             self.title_terms.append(title_terms)
+            self.heading_terms.append(heading_terms(str(doc.get("content", ""))))
             text = " ".join(
                 str(doc.get(k, "")) for k in ("title", "content", "url")
             )
@@ -111,6 +131,13 @@ class TfidfRetriever:
 
         scores: list[tuple[float, int]] = []
         title_boost = 1.6
+        heading_boost = 1.45
+        # A page whose whole title appears in the query is the page being asked
+        # about ("What is his experience?" -> /explore/, titled "Experience").
+        # Without this, a short page that happens to mention the word once
+        # outranks the page that is actually about it.
+        covered_boost = 2.0
+        query_terms = set(q_tf)
         for i, doc_vec in enumerate(self.doc_vectors):
             score = 0.0
             for qt, qw in q_vec.items():
@@ -120,6 +147,11 @@ class TfidfRetriever:
                     # boost when the query term sits in the doc title
                     if qt in self.title_terms[i]:
                         score += qw * dw * (title_boost - 1.0)
+                    # ... or in a section heading ("EDUCATION University of ...")
+                    elif qt in self.heading_terms[i]:
+                        score += qw * dw * (heading_boost - 1.0)
+            if score > 0 and self.title_terms[i] and self.title_terms[i] <= query_terms:
+                score *= covered_boost
             if score > 0:
                 scores.append((score, i))
         scores.sort(reverse=True)

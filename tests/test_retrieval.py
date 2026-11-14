@@ -99,6 +99,91 @@ def test_title_terms_outrank_body_only_matches() -> None:
     assert [hit["title"] for hit in hits] == ["Projects", "Blog"]
 
 
+def test_heading_terms_picks_up_caps_and_markdown_headings() -> None:
+    assert retrieval.heading_terms("SKILLS TypeScript\n## Education") == {
+        "skills",
+        "education",
+    }
+
+
+def test_heading_terms_ignores_ordinary_words() -> None:
+    assert retrieval.heading_terms("Rohmad builds developer tools in Kediri") == set()
+
+
+def test_a_section_heading_scores_higher_than_the_same_words_in_body_text() -> None:
+    # Chunked resumes put the section heading inline ("EDUCATION University
+    # of ..."). The heading marks what the chunk is about, so the same words
+    # in a heading must outrank an identical chunk where they are prose.
+    retriever = retrieval.TfidfRetriever(
+        [
+            {
+                "id": "heading",
+                "title": "Resume",
+                "url": "/docs/resume.pdf",
+                "content": "EDUCATION University of Brawijaya, Malang",
+            },
+            {
+                "id": "prose",
+                "title": "Resume",
+                "url": "/docs/resume.pdf",
+                "content": "Education University of Brawijaya, Malang",
+            },
+        ]
+    )
+
+    hits = retriever.search("education", top_k=2)
+
+    assert hits[0]["score"] > hits[1]["score"]
+
+
+def test_query_that_names_a_page_title_wins_over_a_passing_mention() -> None:
+    # "What is his experience?" should land on the page titled Experience,
+    # not on a short note that happens to say "developer experience" once.
+    retriever = retrieval.TfidfRetriever(
+        [
+            {
+                "id": "experience",
+                "title": "Experience",
+                "url": "/explore/",
+                "content": (
+                    "A seasoned career across logistics, insurtech, agritech, "
+                    "fintech and developer platforms. Fullstack associate "
+                    "manager at Alto Network: leading eleven engineers, "
+                    "shipping internal dashboards and payment tools. Previously "
+                    "senior engineer at AIA Indonesia, platform engineer at "
+                    "eFishery, full-stack engineer at Jubelio, and React Native "
+                    "developer at SiCepat Express."
+                ),
+            },
+            {
+                "id": "blog",
+                "title": "Blog",
+                "url": "/blog/",
+                "content": "Notes on engineering, developer experience, and shipping.",
+            },
+        ]
+    )
+
+    hits = retriever.search("what is his experience", top_k=2)
+
+    assert [hit["title"] for hit in hits] == ["Experience", "Blog"]
+
+
+def test_title_coverage_does_not_boost_an_unrelated_page() -> None:
+    retriever = retrieval.TfidfRetriever(
+        [
+            {
+                "id": "experience",
+                "title": "Experience",
+                "url": "/explore/",
+                "content": "A seasoned career across logistics and fintech platforms.",
+            }
+        ]
+    )
+
+    assert retriever.search("what is his background") == []
+
+
 def test_plural_query_matches_singular_term_in_corpus() -> None:
     retriever = retrieval.TfidfRetriever(
         [{"id": "n", "title": "Journal", "url": "/journal/", "content": "a single note"}]
