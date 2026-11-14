@@ -14,9 +14,29 @@ from collections import defaultdict
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 
+# Function words carry no signal for retrieval and, worse, make every document
+# match: "What is Rohmad's education?" used to score pages on "what" and the
+# leftover "s" from the possessive. Content terms are what should decide.
+_STOPWORDS = frozenset(
+    """
+    a an the and or but if of to in on at by for with from as into than then
+    is are was were be been being am do does did have has had
+    i me my we our us you your he him his she her it its they them their
+    this that these those there here
+    what which who whom whose when where why how
+    can could should would will shall may might must
+    not no yes about tell show give please any some more most
+    """.split()
+)
+
 
 def tokenize(text: str) -> list[str]:
-    return _TOKEN_RE.findall(text.lower())
+    return [term for term in _TOKEN_RE.findall(text.lower()) if _is_content_term(term)]
+
+
+def _is_content_term(term: str) -> bool:
+    # Single characters are possessive leftovers ("rohmad's" -> "s") or noise.
+    return len(term) > 1 and term not in _STOPWORDS
 
 
 def expand_terms(terms: list[str]) -> list[str]:

@@ -24,6 +24,13 @@ bun run build:ask-index
 
 Restart the service after regenerating.
 
+### Your own documents
+
+Anything dropped into `DOCS_DIR` (`/var/lib/ask-api/docs` on the VPS) is chunked
+and indexed alongside the site pages: `.md`, `.markdown`, `.txt` and text-based
+`.pdf`. See [docs/DOCUMENTS.md](docs/DOCUMENTS.md) for the upload commands,
+verification steps and what makes a good knowledge document.
+
 ## Optional LLM generation
 
 Set these env vars (copy `.env.example` to `.env`):

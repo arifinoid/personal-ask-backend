@@ -83,6 +83,69 @@ def test_chat_works_without_a_retriever(monkeypatch, client: TestClient) -> None
     assert response.json()["sources"] == []
 
 
+class StubRetriever:
+    def __init__(self, hits: list[dict]) -> None:
+        self.hits = hits
+
+    def search(self, question: str, top_k: int = 3) -> list[dict]:
+        return self.hits[:top_k]
+
+
+def hit(title: str, url: str, snippet: str, score: float) -> dict:
+    return {"title": title, "url": url, "snippet": snippet, "score": score}
+
+
+def test_select_hits_drops_matches_far_below_the_best_score() -> None:
+    hits = [
+        hit("Resume", "/docs/resume.pdf", "EDUCATION University of Brawijaya", 0.9),
+        hit("Home", "/", "fullstack software engineer", 0.2),
+    ]
+
+    assert main._select_hits(hits) == [hits[0]]
+
+
+def test_select_hits_keeps_close_matches() -> None:
+    hits = [
+        hit("Resume", "/docs/resume.pdf", "EDUCATION University of Brawijaya", 0.9),
+        hit("About", "/about/", "fullstack software engineer", 0.8),
+    ]
+
+    assert main._select_hits(hits) == hits
+
+
+def test_unique_hits_keeps_one_result_per_url() -> None:
+    hits = [
+        hit("Resume", "/docs/resume.pdf", "EDUCATION University of Brawijaya", 0.9),
+        hit("Resume", "/docs/resume.pdf", "SKILLS TypeScript, React", 0.8),
+        hit("Home", "/", "fullstack software engineer", 0.7),
+    ]
+
+    assert main._unique_hits(hits) == [hits[0], hits[2]]
+
+
+def test_unique_hits_respects_the_limit() -> None:
+    hits = [hit(str(i), f"/{i}/", "text long enough to be a snippet", 0.5) for i in range(5)]
+
+    assert len(main._unique_hits(hits, limit=2)) == 2
+
+
+def test_chat_cites_a_chunked_document_once_but_answers_from_several_chunks(
+    monkeypatch, client: TestClient
+) -> None:
+    hits = [
+        hit("Resume", "/docs/resume.pdf", "EDUCATION University of Brawijaya, Malang.", 0.9),
+        hit("Resume", "/docs/resume.pdf", "SKILLS TypeScript, React, Next.js, Go.", 0.85),
+    ]
+    monkeypatch.setattr(main, "RETRIEVER", StubRetriever(hits))
+
+    body = client.post("/v1/chat", json={"question": "education and skills"}).json()
+
+    assert [source["url"] for source in body["sources"]] == ["/docs/resume.pdf"]
+    assert "University of Brawijaya" in body["answer"]
+    assert "TypeScript" in body["answer"]
+    assert body["answer"].count("1. [Resume]") == 1
+
+
 def test_chat_never_returns_500_for_template_questions(client: TestClient) -> None:
     templates = [
         "What projects has Rohmad built?",

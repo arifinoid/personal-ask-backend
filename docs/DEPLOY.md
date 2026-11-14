@@ -77,6 +77,11 @@ sudo install -m 0640 -o ask-api -g ask-api resume.pdf /var/lib/ask-api/docs/
 sudo systemctl restart ask-api
 ```
 
+nginx serves the same directory at `/docs/` (see the `vps-ask-api.nix` module in
+the NixOS repo), which is where the source links in answers point. `autoindex`
+is off, so a document is only reachable by its exact filename. See
+[DOCUMENTS.md](DOCUMENTS.md) for the full upload and authoring guide.
+
 ## Verify
 
 ```bash

@@ -47,34 +47,84 @@ RETRIEVAL_ONLY_NOTICE = (
 )
 
 
-def load_corpus() -> list[dict]:
+def load_corpus(
+    corpus_path: Path = CORPUS_PATH, docs_dir: Path | None = DOCS_DIR
+) -> list[dict]:
     docs: list[dict] = []
 
     # 1. Static corpus.json (site pages)
-    if CORPUS_PATH.exists():
-        with CORPUS_PATH.open("r", encoding="utf-8") as f:
+    if corpus_path.exists():
+        with corpus_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, list):
             docs.extend(data)
 
-    # 2. Documents from DOCS_DIR (txt / md / pdf)
-    if DOCS_DIR and DOCS_DIR.is_dir():
-        for path in sorted(DOCS_DIR.iterdir()):
+    # 2. Documents from docs_dir (txt / md / pdf)
+    if docs_dir and docs_dir.is_dir():
+        for path in sorted(docs_dir.iterdir()):
             if not path.is_file():
                 continue
             content = _read_file(path)
             if not content.strip():
                 continue
-            docs.append(
-                {
-                    "id": f"file:{path.stem}",
-                    "title": path.stem.replace("_", " ").title(),
-                    "url": f"/docs/{path.name}",
-                    "content": content,
-                }
-            )
+
+            # One long file (a resume, a project write-up) is a bad retrieval
+            # unit: TF-IDF dilutes it and the best window can sit anywhere in
+            # it. Split on line boundaries so each chunk competes on its own.
+            chunks = chunk_text(content)
+            title = path.stem.replace("_", " ").replace("-", " ").title()
+            url = f"/docs/{path.name}"
+            for index, chunk in enumerate(chunks, 1):
+                doc_id = f"file:{path.stem}" if len(chunks) == 1 else f"file:{path.stem}#{index}"
+                docs.append({"id": doc_id, "title": title, "url": url, "content": chunk})
 
     return docs
+
+
+def chunk_text(text: str, max_chars: int = 700) -> list[str]:
+    """Split extracted document text into retrieval-sized chunks.
+
+    Lines are packed until they reach max_chars, which keeps headings next to
+    the section they introduce. A single oversized line is split on spaces.
+    """
+    blocks = [line.strip() for line in text.splitlines() if line.strip()]
+    chunks: list[str] = []
+    current: list[str] = []
+    length = 0
+
+    def flush() -> None:
+        nonlocal current, length
+        if current:
+            chunks.append(" ".join(current))
+            current, length = [], 0
+
+    for block in blocks:
+        if len(block) > max_chars:
+            flush()
+            chunks.extend(_split_long_block(block, max_chars))
+            continue
+        if current and length + len(block) + 1 > max_chars:
+            flush()
+        current.append(block)
+        length += len(block) + 1
+    flush()
+
+    return chunks
+
+
+def _split_long_block(block: str, max_chars: int) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+    length = 0
+    for word in block.split():
+        if current and length + len(word) + 1 > max_chars:
+            chunks.append(" ".join(current))
+            current, length = [], 0
+        current.append(word)
+        length += len(word) + 1
+    if current:
+        chunks.append(" ".join(current))
+    return chunks
 
 
 def _read_file(path: Path) -> str:
@@ -142,21 +192,77 @@ def chat(req: ChatRequest) -> ChatResponse:
         raise HTTPException(status_code=400, detail="question is required")
 
     question = req.question.strip()
-    hits = RETRIEVER.search(question, top_k=3) if RETRIEVER else []
-    sources = [
-        Source(title=h["title"], url=h["url"], snippet=h["snippet"]) for h in hits
-    ]
+    # Retrieve more than we cite: a long document can occupy several chunk
+    # slots, and one link per document is all the answer needs.
+    hits = _select_hits(RETRIEVER.search(question, top_k=8)) if RETRIEVER else []
+    chunks = [_to_source(hit) for hit in hits]
+    sources = [_to_source(hit) for hit in _unique_hits(hits)]
 
     retrieval_only = not bool(LLM_BASE_URL)
     if retrieval_only:
-        answer = build_retrieval_only_answer(question, sources)
+        answer = build_retrieval_only_answer(question, sources, chunks)
     else:
         answer = generate_with_llm(question, sources)
 
     return ChatResponse(answer=answer, sources=sources, retrieval_only=retrieval_only)
 
 
-def build_retrieval_only_answer(question: str, sources: list[Source]) -> str:
+def _select_hits(hits: list[dict], min_ratio: float = 0.55) -> list[dict]:
+    """Drop weak matches relative to the best hit.
+
+    Retrieval-only answers have no model to discard irrelevant snippets, so a
+    page that merely shares a common word ("engineer") would otherwise end up
+    as a bullet next to the real answer.
+    """
+    if not hits:
+        return []
+    floor = hits[0]["score"] * min_ratio
+    return [hit for hit in hits if hit["score"] >= floor]
+
+
+def _unique_hits(hits: list[dict], limit: int = 3) -> list[dict]:
+    """Keep the best hit per URL so chunked documents don't crowd the answer."""
+    picked: list[dict] = []
+    seen: set[str] = set()
+    for hit in hits:
+        url = hit.get("url", "")
+        if url in seen:
+            continue
+        seen.add(url)
+        picked.append(hit)
+        if len(picked) >= limit:
+            break
+    return picked
+
+
+_PHONE_CANDIDATE = re.compile(r"\+?\d[\d\s().-]{7,}\d")
+
+
+def redact_phone_numbers(text: str) -> str:
+    """Hide phone numbers that documents such as a resume carry in headers.
+
+    Candidates need 9-15 digits, which keeps date ranges ("2024 - 2026"), SLA
+    figures ("99.99%") and record counts out of scope.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        digits = re.sub(r"\D", "", match.group())
+        return "[phone redacted]" if 9 <= len(digits) <= 15 else match.group()
+
+    return _PHONE_CANDIDATE.sub(replace, text)
+
+
+def _to_source(hit: dict) -> Source:
+    return Source(
+        title=hit["title"],
+        url=hit["url"],
+        snippet=redact_phone_numbers(hit["snippet"]),
+    )
+
+
+def build_retrieval_only_answer(
+    question: str, sources: list[Source], chunks: list[Source] | None = None
+) -> str:
     q_lower = question.lower()
     greetings = {"hi", "hello", "hey", "hi there", "hello there", "greetings"}
     if q_lower in greetings or q_lower.startswith(("hi ", "hello ", "hey ")):
@@ -178,7 +284,7 @@ def build_retrieval_only_answer(question: str, sources: list[Source]) -> str:
             "• Tell me about the unified login system"
         )
 
-    answer = _synthesize_answer(question, sources)
+    answer = _synthesize_answer(question, chunks if chunks is not None else sources)
 
     # Add source links at the bottom
     answer += "\n\nSources:\n"
@@ -296,6 +402,11 @@ def _clean_snippet(text: str) -> str:
 
     # Collapse whitespace
     text = re.sub(r"\s+", " ", text).strip()
+
+    # PDF extraction glues bullet glyphs to the following word ("•Led ...")
+    # and leaves table rules ("|") behind; drop them at the window edges.
+    text = re.sub(r"^[•·*|-]+\s*", "", text)
+    text = re.sub(r"\s*[•·|]+$", "", text)
 
     # The retriever prefixes an ellipsis when a snippet starts mid-sentence.
     # Drop that partial sentence so the bullet starts at a sentence boundary.
