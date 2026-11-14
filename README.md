@@ -57,6 +57,18 @@ curl -X POST http://localhost:8080/v1/chat \
   -d '{"question": "Where does Rohmad work?"}'
 ```
 
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+`tests/` covers the TF-IDF retriever, snippet windowing, answer synthesis and
+the `/v1/chat` endpoint (including the regression where a retrieved document
+crashed the endpoint with a 500). No network access or LLM is needed — the
+endpoint tests run against a small in-memory corpus.
+
 ## Deploy
 
 See `docs/DEPLOY.md` for systemd + nginx on the VPS.
