@@ -243,28 +243,27 @@ def _synthesize_answer(question: str, sources: list[Source]) -> str:
     )
     is_blog = any(w in q_lower for w in ["blog", "note", "write", "article", "post"])
 
-    parts: list[str] = []
-
     # Greeting / intro based on intent
     if is_projects:
-        parts.append("Rohmad has built several projects across his career:")
+        intro = "Rohmad has built several projects across his career:"
     elif is_work:
-        parts.append("Here's where Rohmad has worked:")
+        intro = "Here's where Rohmad has worked:"
     elif is_experience:
-        parts.append("Rohmad's background spans several years across multiple companies:")
+        intro = "Rohmad's background spans several years across multiple companies:"
     elif is_skills:
-        parts.append("Rohmad's technical skills include:")
+        intro = "Rohmad's technical skills include:"
     elif is_contact:
-        parts.append("Here's how to reach Rohmad:")
+        intro = "Here's how to reach Rohmad:"
     elif is_blog:
-        parts.append("Here's what's on the blog:")
+        intro = "Here's what's on the blog:"
     else:
-        parts.append("Here's what I found:")
+        intro = "Here's what I found:"
 
-    # Extract key facts from source snippets
+    # Extract key facts from the snippets returned by the retriever
+    bullets: list[str] = []
     seen: set[str] = set()
     for s in sources:
-        snippet = (s.content or "").strip()
+        snippet = (s.snippet or "").strip()
         key = snippet[:60]
         if key in seen or len(snippet) < 20:
             continue
@@ -272,12 +271,12 @@ def _synthesize_answer(question: str, sources: list[Source]) -> str:
 
         clean = _clean_snippet(snippet)
         if clean:
-            parts.append(f"• {clean}")
+            bullets.append(f"• {clean}")
 
-    if not parts:
-        parts.append("I found some relevant pages but couldn't extract a clear summary.")
+    if not bullets:
+        return "I found some relevant pages but couldn't extract a clear summary."
 
-    return "\n".join(parts)
+    return "\n".join([intro, *bullets])
 
 
 def _clean_snippet(text: str) -> str:
@@ -297,6 +296,17 @@ def _clean_snippet(text: str) -> str:
 
     # Collapse whitespace
     text = re.sub(r"\s+", " ", text).strip()
+
+    # The retriever prefixes an ellipsis when a snippet starts mid-sentence.
+    # Drop that partial sentence so the bullet starts at a sentence boundary.
+    if text.startswith("…"):
+        text = text[1:].lstrip()
+        cut = text.find(". ")
+        if cut != -1 and cut + 2 < len(text) // 2:
+            text = text[cut + 2:]
+
+    # Drop a trailing ellipsis; the summary adds its own "..." marker.
+    text = text.rstrip("… ").strip()
 
     # Take first ~200 chars as a summary
     if len(text) > 200:

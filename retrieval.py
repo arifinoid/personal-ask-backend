@@ -130,9 +130,30 @@ class TfidfRetriever:
             if idx != -1 and (best_idx == -1 or idx < best_idx):
                 best_idx = idx
         start = max(0, best_idx - 60) if best_idx != -1 else 0
-        snippet = content[start:start + max_chars]
+        # Snap the window to word boundaries so snippets never start or end
+        # mid-word ("econd. Software engineer...").
+        sentence_start = False
         if start > 0:
+            next_space = content.find(" ", start, start + 40)
+            if next_space != -1:
+                start = next_space + 1
+            # Prefer a nearby sentence boundary so the snippet reads from the
+            # start of a sentence instead of the middle of one.
+            boundary = max(
+                content.rfind(". ", max(0, start - 100), start),
+                content.rfind(": ", max(0, start - 100), start),
+            )
+            if boundary != -1:
+                start = boundary + 2
+                sentence_start = True
+        end = start + max_chars
+        if end < len(content):
+            last_space = content.rfind(" ", start, end)
+            if last_space > start:
+                end = last_space
+        snippet = content[start:end]
+        if start > 0 and not sentence_start:
             snippet = "…" + snippet
-        if start + max_chars < len(content):
+        if end < len(content):
             snippet = snippet + "…"
         return snippet.strip()
