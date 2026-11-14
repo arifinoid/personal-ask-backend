@@ -129,19 +129,24 @@ class TfidfRetriever:
             idx = lower.find(term)
             if idx != -1 and (best_idx == -1 or idx < best_idx):
                 best_idx = idx
-        start = max(0, best_idx - 60) if best_idx != -1 else 0
+        # Keep some context before the match. Scaling it to the window keeps the
+        # matched term inside even when callers ask for a short snippet.
+        context = min(60, max_chars // 3)
+        start = max(0, best_idx - context) if best_idx != -1 else 0
         # Snap the window to word boundaries so snippets never start or end
         # mid-word ("econd. Software engineer...").
         sentence_start = False
         if start > 0:
-            next_space = content.find(" ", start, start + 40)
+            limit = min(start + 40, best_idx) if best_idx != -1 else start + 40
+            next_space = content.find(" ", start, limit)
             if next_space != -1:
                 start = next_space + 1
             # Prefer a nearby sentence boundary so the snippet reads from the
             # start of a sentence instead of the middle of one.
+            lookback = min(100, max_chars // 3)
             boundary = max(
-                content.rfind(". ", max(0, start - 100), start),
-                content.rfind(": ", max(0, start - 100), start),
+                content.rfind(". ", max(0, start - lookback), start),
+                content.rfind(": ", max(0, start - lookback), start),
             )
             if boundary != -1:
                 start = boundary + 2
