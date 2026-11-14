@@ -6,20 +6,22 @@ Endpoints:
 
 Retrieval is pure-Python TF-IDF over a static corpus built from corpus.json
 and/or documents stored in DOCS_DIR (txt/md/pdf). Optional LLM generation is
-gated behind LLM_BASE_URL.
+gated behind LLM_BASE_URL; when absent the service returns synthesized answers
+from retrieved sources (retrieval_only mode).
 """
 
 import json
 import os
+import re
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import retrieval
-
-from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -41,8 +43,7 @@ LLM_MODEL = os.getenv("LLM_MODEL", "llama3.2:1b")
 
 RETRIEVAL_ONLY_NOTICE = (
     "LLM generation not configured on this service. "
-    "Below are the most relevant sections from the site "
-    "open a link to read more."
+    "Below are the most relevant sections from the site — open a link to read more."
 )
 
 
@@ -176,10 +177,132 @@ def build_retrieval_only_answer(question: str, sources: list[Source]) -> str:
             "• What's his experience with Kubernetes?\n"
             "• Tell me about the unified login system"
         )
-    lines = [RETRIEVAL_ONLY_NOTICE, ""]
+
+    answer = _synthesize_answer(question, sources)
+
+    # Add source links at the bottom
+    answer += "\n\nSources:\n"
     for i, s in enumerate(sources, 1):
-        lines.append(f"{i}. [{s.title}]({s.url}) — {s.snippet}")
-    return "\n".join(lines)
+        answer += f"{i}. [{s.title}]({s.url})\n"
+
+    return answer
+
+
+def _synthesize_answer(question: str, sources: list[Source]) -> str:
+    q_lower = question.lower()
+
+    # Detect intent
+    is_projects = any(w in q_lower for w in ["project", "build", "make", "create"])
+    is_work = any(
+        w in q_lower
+        for w in [
+            "work",
+            "job",
+            "company",
+            "employer",
+            "alto",
+            "aia",
+            "efishery",
+            "jubelio",
+            "sicepat",
+        ]
+    )
+    is_experience = any(
+        w in q_lower
+        for w in ["experience", "year", "background", "career", "history"]
+    )
+    is_skills = any(
+        w in q_lower
+        for w in [
+            "skill",
+            "tech",
+            "stack",
+            "language",
+            "framework",
+            "tool",
+            "kubernetes",
+            "python",
+            "react",
+            "java",
+            "go",
+            "node",
+        ]
+    )
+    is_contact = any(
+        w in q_lower
+        for w in [
+            "contact",
+            "email",
+            "reach",
+            "linkedin",
+            "github",
+            "where",
+            "location",
+            "kediri",
+        ]
+    )
+    is_blog = any(w in q_lower for w in ["blog", "note", "write", "article", "post"])
+
+    parts: list[str] = []
+
+    # Greeting / intro based on intent
+    if is_projects:
+        parts.append("Rohmad has built several projects across his career:")
+    elif is_work:
+        parts.append("Here's where Rohmad has worked:")
+    elif is_experience:
+        parts.append("Rohmad's background spans several years across multiple companies:")
+    elif is_skills:
+        parts.append("Rohmad's technical skills include:")
+    elif is_contact:
+        parts.append("Here's how to reach Rohmad:")
+    elif is_blog:
+        parts.append("Here's what's on the blog:")
+    else:
+        parts.append("Here's what I found:")
+
+    # Extract key facts from source snippets
+    seen: set[str] = set()
+    for s in sources:
+        snippet = (s.content or "").strip()
+        key = snippet[:60]
+        if key in seen or len(snippet) < 20:
+            continue
+        seen.add(key)
+
+        clean = _clean_snippet(snippet)
+        if clean:
+            parts.append(f"• {clean}")
+
+    if not parts:
+        parts.append("I found some relevant pages but couldn't extract a clear summary.")
+
+    return "\n".join(parts)
+
+
+def _clean_snippet(text: str) -> str:
+    """Clean raw page text into a readable sentence."""
+    if not text:
+        return ""
+
+    # Remove common code artifacts
+    text = text.replace("export const metadata", "")
+    text = text.replace("export default function", "")
+    text = text.replace("return (", "")
+    text = text.replace("&nbsp;", " ")
+    text = text.replace("&amp;", "&")
+    text = text.replace("&lt;", "<")
+    text = text.replace("&gt;", ">")
+    text = text.replace("{ }", "")
+
+    # Collapse whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+
+    # Take first ~200 chars as a summary
+    if len(text) > 200:
+        text = text[:200].rsplit(" ", 1)[0] + "..."
+
+    return text
 
 
 def generate_with_llm(question: str, sources: list[Source]) -> str:
