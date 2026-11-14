@@ -51,8 +51,16 @@ def test_tokenize_lowercases_and_splits_on_punctuation() -> None:
     ]
 
 
+def test_tokenize_drops_stopwords_and_possessive_leftovers() -> None:
+    assert retrieval.tokenize("What is Rohmad's education?") == ["rohmad", "education"]
+
+
 def test_expand_terms_adds_singular_form_for_long_plural_terms() -> None:
     assert retrieval.expand_terms(["projects", "go"]) == ["projects", "project", "go"]
+
+
+def test_stopword_only_query_returns_no_hits() -> None:
+    assert make_retriever().search("what is it") == []
 
 
 def test_empty_retriever_returns_no_hits() -> None:
