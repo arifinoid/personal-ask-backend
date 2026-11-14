@@ -94,6 +94,11 @@ reachable by its exact name.
   queries and documents.
 - Results are ranked by TF-IDF cosine similarity with a title boost, expanded for
   simple plurals ("projects" also matches "project").
+- A page whose **whole title appears in the question** is boosted ("What is his
+  experience?" lands on the page titled *Experience*, not on a short note that
+  says "developer experience" once).
+- Section headings and acronyms (`EDUCATION`, `SKILLS`, `SLA`) are boosted, so a
+  resume's education section beats a passing mention in its contact header.
 - Hits weaker than 55% of the best hit are discarded, so an unrelated page can no
   longer ride along on a shared word like "engineer".
 - At most three sources are cited, **one per document** — several chunks of the
