@@ -1,113 +1,105 @@
 # Deploy — personal-ask-backend
 
-Runs on the same VPS that serves `arifinoid.web.id`, behind nginx.
+Runs as the `ask-api` systemd unit on the VPS that serves `arifinoid.web.id`,
+behind nginx under `/health` and `/v1/`.
+
+The unit, the service user, the nginx routes and the env file are declared in
+the NixOS repo:
+
+```
+nix/modules/nixos/vps-ask-api.nix
+```
+
+Nothing about the runtime is hand-edited on the VPS anymore.
+
+## Layout on the VPS
+
+| Path | What |
+| --- | --- |
+| `/srv/ask-api/current` | symlink to the active release |
+| `/srv/ask-api/releases/<sha>` | one directory per deployed commit |
+| `/etc/ask-api.env` | env file, rendered from sops-nix at activation |
+| `/var/lib/ask-api/docs` | extra RAG documents (txt / md / pdf) |
+| `/var/lib/ask-api` | `HOME` for the `ask-api` user |
+
+Python and every dependency (`fastapi`, `uvicorn`, `pydantic`, `httpx`,
+`python-dotenv`, `pypdf`) come from the Nix closure built by the module. There
+is no venv and no `pip install` step on the host.
+
+## Deploy flow
+
+`.github/workflows/deploy.yml` runs on every push to `main`:
+
+1. lint + `py_compile`
+2. `rsync` the commit to `/srv/ask-api/releases/<sha>/`
+3. atomically flip `/srv/ask-api/current`
+4. `systemctl restart ask-api`
+5. `curl` `http://127.0.0.1:8080/health` on the VPS
+
+If step 3–5 fails, the previous release is restored and the job exits red.
+Only the three newest releases are kept.
 
 ## RAM warning
 
-This VPS has limited memory (~1.89 GiB, no GPU). **Do not run Ollama locally** — even a 1B parameter model will OOM or thrash swap.
+This VPS has ~1.9 GiB of RAM and no GPU. **Do not run Ollama locally** — even
+a 1B parameter model will OOM or thrash swap. The default is retrieval-only
+mode (~200 MiB), which returns the top-3 sources instead of a generated
+answer.
 
-Run in **retrieval-only mode** (default): leave `LLM_BASE_URL` unset. The service returns top-3 sources with titles, URLs, and snippets — zero model overhead, instant responses, ~200 MiB RAM.
+For generated answers, point `LLM_BASE_URL` at an external OpenAI-compatible
+API (for example OpenRouter) instead of running a model on the VPS.
 
-If you want generated answers, point `LLM_BASE_URL` at an external inference API (e.g. OpenRouter) instead of running a model on this VPS.
+## Changing settings
 
-## systemd unit
-
-`/etc/systemd/system/ask-api.service`:
-```ini
-[Unit]
-Description=ask.arifinoid.web.id FastAPI service
-After=network.target
-
-[Service]
-Type=simple
-User=www-data
-WorkingDirectory=/var/www/arifinoid/personal-ask-backend
-EnvironmentFile=/var/www/arifinoid/personal-ask-backend/.env
-ExecStart=/usr/bin/uvicorn main:app --host 127.0.0.1 --port 8080
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Commands:
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now ask-api
-sudo systemctl status ask-api
-```
-
-## .env (VPS)
+Everything in `/etc/ask-api.env` is declared in `vps-ask-api.nix`:
 
 ```ini
-# CORS
-ALLOWED_ORIGINS=https://arifinoid.web.id,http://localhost:3000
-
-# LLM generation — LEAVE EMPTY for retrieval-only mode (recommended on this VPS)
+ALLOWED_ORIGINS=https://arifinoid.web.id,https://www.arifinoid.web.id
 LLM_BASE_URL=
 LLM_API_KEY=
 LLM_MODEL=llama3.2:1b
-
-# Bind address for uvicorn
-HOST=127.0.0.1
-PORT=8080
-
-# Directory containing extra documents (txt / md / pdf) for RAG
-DOCS_DIR=/var/www/arifinoid/ask-docs
+DOCS_DIR=/var/lib/ask-api/docs
 ```
+
+Edit the `sops.templates."ask-api-env"` block, then rebuild the VPS. A real
+`LLM_API_KEY` should be moved to a sops secret and referenced with
+`${config.sops.placeholder.<name>}` instead of being committed to the NixOS
+repo.
 
 ## Documents
 
-Drop your resume and project docs (`.txt`, `.md`, `.markdown`, `.pdf`) into `$DOCS_DIR`:
+Drop `.txt`, `.md`, `.markdown` or `.pdf` files into `/var/lib/ask-api/docs`
+(owned by `ask-api:ask-api`), then restart the service so the corpus is
+reloaded:
 
 ```bash
-sudo mkdir -p /var/www/arifinoid/ask-docs
-sudo chown <your-user>:<your-user> /var/www/arifinoid/ask-docs
-# copy your resume.pdf, notes.md, etc. here
-```
-
-Restart after adding/removing documents:
-```bash
+sudo install -m 0640 -o ask-api -g ask-api resume.pdf /var/lib/ask-api/docs/
 sudo systemctl restart ask-api
 ```
-
-## nginx
-
-Inside the `arifinoid.web.id` server block:
-```nginx
-location /health {
-    proxy_pass http://127.0.0.1:8080;
-}
-location /v1/ {
-    proxy_pass http://127.0.0.1:8080;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-}
-```
-
-Then `sudo nginx -t && sudo systemctl reload nginx`.
-
-## External LLM (optional)
-
-If you want generated answers without running a local model, set in `.env`:
-
-```ini
-LLM_BASE_URL=https://api.openrouter.ai/api/v1
-LLM_API_KEY=sk-or-...
-LLM_MODEL=meta-llama/llama-3.2-1b-instruct
-```
-
-The backend posts to any OpenAI-compatible `/v1/chat/completions` endpoint.
 
 ## Verify
 
 ```bash
-curl http://localhost:8080/health
-# {"status":"ok","corpus_docs":6,"retrieval_only":true,"llm_configured":false}
+curl http://127.0.0.1:8080/health
+# {"status":"ok","corpus_docs":5,"retrieval_only":true,"llm_configured":false}
 
-curl -X POST http://localhost:8080/v1/chat \
+curl -X POST http://127.0.0.1:8080/v1/chat \
   -H "Content-Type: application/json" \
   -d '{"question":"what is rohmads experience?"}'
 ```
 
-CORS is locked to `ALLOWED_ORIGINS` from `.env`.
+From outside the VPS use `https://arifinoid.web.id/health` and
+`https://arifinoid.web.id/v1/chat`.
+
+CORS is locked to `ALLOWED_ORIGINS` from the env file.
+
+## Rollback
+
+Point the symlink at an older release and restart:
+
+```bash
+ls -1dt /srv/ask-api/releases/*/
+sudo ln -sfn /srv/ask-api/releases/<sha> /srv/ask-api/current.new
+sudo mv -Tf /srv/ask-api/current.new /srv/ask-api/current
+sudo systemctl restart ask-api
+```

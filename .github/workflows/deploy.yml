@@ -1,13 +1,18 @@
 name: Deploy
 
+# The unit, the user and the nginx routes live in the NixOS repo
+# (nix/modules/nixos/vps-ask-api.nix). This workflow only ships code and
+# flips the release symlink; Python and its dependencies come from the Nix
+# closure, so there is no venv/pip step on the VPS.
+
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: deploy-${{ github.ref }}
-  cancel-in-progress: true
+  group: deploy-production
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -15,6 +20,8 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
     steps:
       - uses: actions/checkout@v4
 
@@ -26,68 +33,69 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install flake8
+          pip install -r requirements.txt flake8
 
       - name: Typecheck / lint
         run: |
           python -m py_compile main.py retrieval.py
           python -m flake8 main.py retrieval.py || true
 
-      - name: Configure SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
-
-      - name: Scan VPS host keys
+      - name: Configure SSH
         run: |
-          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Upload code to VPS
+      - name: Upload release
         run: |
+          ssh "root@$VPS_HOST" 'mkdir -p /srv/ask-api/releases'
+          # Each commit lands in its own release directory, so a half-finished
+          # upload never replaces the running code.
           rsync -az --delete \
-            --exclude='.env' \
-            --exclude='.venv/' \
-            --exclude='__pycache__/' \
-            --exclude='*.pyc' \
-            --exclude='.git/' \
-            --exclude='.github/' \
-            . "root@${{ secrets.VPS_HOST }}:/var/www/arifinoid/personal-ask-backend/"
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude '.venv' \
+            --exclude '__pycache__' \
+            --exclude '*.pyc' \
+            --exclude '.env' \
+            --exclude '.env.*' \
+            ./ "root@$VPS_HOST:/srv/ask-api/releases/${{ github.sha }}/"
 
-      - name: Install Python dependencies on VPS
+      # The symlink flip is atomic: the unit keeps serving the old release
+      # until the new one is in place. If anything after the flip fails, the
+      # previous release is restored and the job exits red.
+      - name: Activate release
         run: |
-          ssh "root@${{ secrets.VPS_HOST }}" '
-            set -eu
-            cd /var/www/arifinoid/personal-ask-backend
-            python3 -m venv .venv
-            source .venv/bin/activate
-            pip install --upgrade pip
-            pip install -r requirements.txt
-          '
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
+          ssh "root@$VPS_HOST" "SHA=${{ github.sha }} bash -s" <<'REMOTE'
+          set -Eeuo pipefail
 
-      - name: Restart ask-api on VPS
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-        run: |
-          ssh "root@${{ secrets.VPS_HOST }}" '
-            cd /var/www/arifinoid/personal-ask-backend
-            pkill -f "uvicorn main:app" 2>/dev/null || true
-            sleep 1
-            .venv/bin/uvicorn main:app --host 127.0.0.1 --port 8080 > ask-api.log 2>&1 &
-            echo $! > ask-api.pid
-            sleep 3
-          '
+          release="/srv/ask-api/releases/$SHA"
+          prev="$(readlink -f /srv/ask-api/current || true)"
 
-      - name: Verify deployment
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-        run: |
-          sleep 3
-          ssh "root@${{ secrets.VPS_HOST }}" 'cat /var/www/arifinoid/personal-ask-backend/ask-api.pid && ps -p $(cat /var/www/arifinoid/personal-ask-backend/ask-api.pid) -o pid,cmd --no-headers'
-          curl -s "http://${{ secrets.VPS_HOST }}:8080/health" || true
+          rollback() {
+            if [ -n "$prev" ] && [ "$prev" != "$release" ]; then
+              echo "rolling back to $prev"
+              ln -sfn "$prev" /srv/ask-api/current.new
+              mv -Tf /srv/ask-api/current.new /srv/ask-api/current
+              systemctl restart ask-api || true
+            fi
+          }
+          trap rollback ERR
+
+          ln -sfn "$release" /srv/ask-api/current.new
+          mv -Tf /srv/ask-api/current.new /srv/ask-api/current
+
+          # Clean up a process left behind by the old /var/www deploy.
+          pkill -f 'uvicorn main:app' 2>/dev/null || true
+
+          systemctl restart ask-api
+
+          curl -fsS --retry 15 --retry-delay 2 --retry-connrefused \
+            http://127.0.0.1:8080/health >/dev/null
+
+          trap - ERR
+
+          # Keep the three newest releases; current is always the newest.
+          ls -1dt /srv/ask-api/releases/*/ | tail -n +4 | xargs -r rm -rf
+          REMOTE

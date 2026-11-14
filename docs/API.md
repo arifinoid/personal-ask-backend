@@ -9,7 +9,7 @@ pure-Python TF-IDF over a static corpus; LLM generation is optional.
 Liveness check. Returns corpus doc count and whether generation is enabled.
 
 ```
-curl https://ask.arifinoid.web.id/health
+curl https://arifinoid.web.id/health
 ```
 
 Response:
@@ -25,7 +25,7 @@ Response:
 Ask a question about the portfolio site.
 
 ```bash
-curl -X POST https://ask.arifinoid.web.id/v1/chat \
+curl -X POST https://arifinoid.web.id/v1/chat \
   -H "Content-Type: application/json" \
   -d '{"question": "Where does Rohmad work now?"}'
 ```
